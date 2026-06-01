@@ -164,7 +164,9 @@ const BladeePage = () => {
         }}
       >
         <a
-          href="mailto:admin@bladee.com"
+          href="https://www.roblox.com/users/1218134282/profile"
+          target="_blank"
+          rel="noopener noreferrer"
           style={{
             fontFamily: "'Courier New', Courier, monospace",
             fontSize: "12px",
@@ -176,7 +178,7 @@ const BladeePage = () => {
           onMouseEnter={(e) => (e.currentTarget.style.color = "rgba(255,255,255,0.8)")}
           onMouseLeave={(e) => (e.currentTarget.style.color = "rgba(255,255,255,0.35)")}
         >
-          contact
+          roblox
         </a>
         <a
           href="https://discord.gg/leandoer"
