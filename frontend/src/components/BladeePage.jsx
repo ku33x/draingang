@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState, useRef } from "react";
+import { Volume2, VolumeX } from "lucide-react";
 import MatrixRain from "./MatrixRain";
 import { ASCII_PORTRAIT, SONGS, CHARSETS } from "../data/asciiArt";
 
 const BladeePage = () => {
   const videoRef = useRef(null);
   const [entered, setEntered] = useState(false);
+  const [muted, setMuted] = useState(false);
 
   const pick = useMemo(
     () => SONGS[Math.floor(Math.random() * SONGS.length)],
@@ -15,7 +17,6 @@ const BladeePage = () => {
     []
   );
 
-  // Set page title to "dg" like the original
   useEffect(() => {
     document.title = "dg";
   }, []);
@@ -27,12 +28,18 @@ const BladeePage = () => {
     setEntered(true);
   };
 
+  // YouTube embed for the audio. Visuals come from bladee.com mp4.
+  // We use autoplay=1, controls=0, and a tight loop. Hidden offscreen.
+  const ytSrc = entered
+    ? `https://www.youtube.com/embed/${pick.youtube}?autoplay=1&controls=0&loop=1&playlist=${pick.youtube}&modestbranding=1&rel=0&playsinline=1&mute=${muted ? 1 : 0}&iv_load_policy=3`
+    : "";
+
   return (
     <div
       className="relative w-screen h-screen overflow-hidden"
       style={{ background: "#000" }}
     >
-      {/* Background video */}
+      {/* Background video (visual only - muted) */}
       <video
         ref={videoRef}
         src={pick.file}
@@ -54,6 +61,26 @@ const BladeePage = () => {
           opacity: 0.4,
         }}
       />
+
+      {/* Hidden YouTube audio player */}
+      {entered && (
+        <iframe
+          key={`${pick.youtube}-${muted ? "m" : "u"}`}
+          title="audio"
+          src={ytSrc}
+          allow="autoplay; encrypted-media"
+          style={{
+            position: "fixed",
+            width: "1px",
+            height: "1px",
+            top: "-9999px",
+            left: "-9999px",
+            border: 0,
+            opacity: 0,
+            pointerEvents: "none",
+          }}
+        />
+      )}
 
       {/* Matrix Rain Canvas */}
       <MatrixRain charset={charset} active={entered} />
@@ -169,6 +196,41 @@ const BladeePage = () => {
           discord
         </a>
       </div>
+
+      {/* Mute toggle (only shown after entered) */}
+      {entered && (
+        <button
+          onClick={() => setMuted((m) => !m)}
+          aria-label={muted ? "unmute" : "mute"}
+          style={{
+            position: "fixed",
+            top: "24px",
+            right: "24px",
+            zIndex: 20,
+            background: "transparent",
+            border: "1px solid rgba(255,255,255,0.15)",
+            borderRadius: "9999px",
+            width: "38px",
+            height: "38px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: "rgba(255,255,255,0.45)",
+            cursor: "pointer",
+            transition: "color 0.2s ease, border-color 0.2s ease",
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.color = "rgba(255,255,255,0.9)";
+            e.currentTarget.style.borderColor = "rgba(255,255,255,0.4)";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.color = "rgba(255,255,255,0.45)";
+            e.currentTarget.style.borderColor = "rgba(255,255,255,0.15)";
+          }}
+        >
+          {muted ? <VolumeX size={16} /> : <Volume2 size={16} />}
+        </button>
+      )}
 
       {/* Start Overlay */}
       {!entered && (

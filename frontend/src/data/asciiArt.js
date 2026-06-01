@@ -48,13 +48,13 @@ export const ASCII_PORTRAIT = `                    .............                
                                             .......                                                 `;
 
 export const SONGS = [
-  { id: "tldr",       file: "https://bladee.com/tldr.mp4",         lyric: "i don't wanna talk about it, tldr",               title: "bladee & mechatok — tldr" },
-  { id: "red-velvet", file: "https://bladee.com/red-velvet.mp4",   lyric: "with the family, we stay loyal like the russians", title: "bladee x yung lean — red velvet" },
-  { id: "victim",     file: "https://bladee.com/victim.mp4",       lyric: "I love to play the victim, I love to pass the blame", title: "bladee — victim" },
-  { id: "obedient",   file: "https://bladee.com/obedient.mp4",     lyric: "we can't even bring no girls in my section",      title: "bladee & ecco2k — obedient" },
-  { id: "be-nice",    file: "https://bladee.com/be-nice-to-me.mp4",lyric: "I broke my wrist, I gotta ice it",                title: "bladee — be nice to me" },
-  { id: "trashstar",  file: "https://bladee.com/trashstar.mp4",    lyric: "actually i fill the bank, how you feel about that?", title: "bladee — trashstar" },
-  { id: "reborn",     file: "https://bladee.com/reborn.mp4",       lyric: "reborn",                                          title: "bladee — reborn" },
+  { id: "tldr",       file: "https://bladee.com/tldr.mp4",         youtube: "JiwpG284QPk", lyric: "i don't wanna talk about it, tldr",                  title: "bladee & mechatok — tldr" },
+  { id: "red-velvet", file: "https://bladee.com/red-velvet.mp4",   youtube: "rsGDmEPP-Bw", lyric: "with the family, we stay loyal like the russians",   title: "bladee x yung lean — red velvet" },
+  { id: "victim",     file: "https://bladee.com/victim.mp4",       youtube: "HDajKZ3ytdY", lyric: "I love to play the victim, I love to pass the blame",title: "bladee — victim" },
+  { id: "obedient",   file: "https://bladee.com/obedient.mp4",     youtube: "2KkMyDSrBVI", lyric: "we can't even bring no girls in my section",         title: "bladee & ecco2k — obedient" },
+  { id: "be-nice",    file: "https://bladee.com/be-nice-to-me.mp4",youtube: "vcAp4nmTZCA", lyric: "I broke my wrist, I gotta ice it",                   title: "bladee — be nice to me" },
+  { id: "trashstar",  file: "https://bladee.com/trashstar.mp4",    youtube: "4bQrqmKCREk", lyric: "actually i fill the bank, how you feel about that?", title: "bladee — trashstar" },
+  { id: "reborn",     file: "https://bladee.com/reborn.mp4",       youtube: "xN-tvjnA3rA", lyric: "reborn",                                             title: "bladee — reborn" },
 ];
 
 export const CHARSETS = [
