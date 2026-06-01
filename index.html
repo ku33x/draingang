@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>dg</title>
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: #000;
+      overflow: hidden;
+      width: 100vw;
+      height: 100vh;
+      font-family: 'Courier New', Courier, monospace;
+    }
+
+    #bg-video {
+      position: fixed;
+      top: 50%; left: 50%;
+      min-width: 100%; min-height: 100%;
+      width: auto; height: auto;
+      transform: translate(-50%, -50%);
+      z-index: 0;
+      object-fit: cover;
+      opacity: 0.4;
+    }
+
+    canvas {
+      display: block;
+      position: fixed;
+      top: 0; left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 1;
+      background: transparent;
+      opacity: 0;
+      transition: opacity 1s ease;
+    }
+
+    #content {
+      position: fixed;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 5;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 1s ease;
+    }
+
+    #ascii-art {
+      font-family: 'Courier New', Courier, monospace;
+      font-size: clamp(5px, 1.1vw, 11px);
+      line-height: 1.2;
+      color: #ffffff;
+      white-space: pre;
+    }
+
+    #lyric {
+      position: fixed;
+      left: 50%;
+      bottom: 80px;
+      transform: translateX(-50%);
+      z-index: 6;
+      color: rgba(255,255,255,0.55);
+      text-align: center;
+      max-width: min(720px, 88vw);
+      opacity: 0;
+      transition: opacity 1.4s ease;
+      pointer-events: none;
+    }
+
+    #lyric-text {
+      font-size: clamp(12px, 1.4vw, 16px);
+      font-style: italic;
+      letter-spacing: 0.04em;
+      line-height: 1.5;
+    }
+
+    #lyric-attr {
+      margin-top: 10px;
+      font-size: 11px;
+      color: rgba(255,255,255,0.3);
+      letter-spacing: 0.2em;
+      text-transform: lowercase;
+    }
+
+    #links {
+      position: fixed;
+      bottom: 28px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 10;
+      display: flex;
+      gap: 28px;
+      opacity: 0;
+      transition: opacity 1s ease;
+      pointer-events: none;
+    }
+
+    #links a {
+      font-size: 12px;
+      color: rgba(255,255,255,0.35);
+      text-decoration: none;
+      letter-spacing: 0.15em;
+      transition: color 0.2s ease;
+    }
+
+    #links a:hover { color: rgba(255,255,255,0.8); }
+
+    #mute-btn {
+      position: fixed;
+      top: 24px;
+      right: 24px;
+      z-index: 20;
+      width: 38px;
+      height: 38px;
+      border-radius: 9999px;
+      border: 1px solid rgba(255,255,255,0.15);
+      background: transparent;
+      color: rgba(255,255,255,0.45);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: color 0.2s ease, border-color 0.2s ease;
+    }
+
+    #mute-btn.visible { display: flex; }
+
+    #mute-btn:hover {
+      color: rgba(255,255,255,0.9);
+      border-color: rgba(255,255,255,0.4);
+    }
+
+    #mute-btn svg { width: 16px; height: 16px; }
+
+    #yt-audio {
+      position: fixed;
+      width: 1px;
+      height: 1px;
+      top: -9999px;
+      left: -9999px;
+      border: 0;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    #start-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+    }
+
+    #start-btn {
+      font-size: 13px;
+      color: rgba(255,255,255,0.4);
+      letter-spacing: 0.2em;
+      text-transform: lowercase;
+      border: 1px solid rgba(255,255,255,0.15);
+      padding: 10px 24px;
+      border-radius: 40px;
+      pointer-events: none;
+      transition: color 0.3s, border-color 0.3s;
+    }
+
+    #start-overlay:hover #start-btn {
+      color: rgba(255,255,255,0.8);
+      border-color: rgba(255,255,255,0.4);
+    }
+  </style>
+</head>
+<body>
+
+<video id="bg-video" loop playsinline muted preload="auto"></video>
+
+<canvas id="c"></canvas>
+
+<div id="content">
+<pre id="ascii-art">                    .............                               ..........                          
+                ......................                    ......................                    
+            .............................             .............................                 
+         .....................................     ...................................              
+       .................................................................................            
+      .................            ...........................             ...............          
+    ........................          ....................                     ............         
+   ........... .................         ...............                         ...........        
+  ..........  ......................      ...........                              ..........       
+  .........  ............................   ........                                ..........      
+ .........   ...............................  ....           ............             .........     
+.........      ...............................           ..................           .........     
+.........        ..............................       .......................          .........    
+.........         ..............................  ............................         .........    
+.........        .............................................................         .........    
+.........        ..............................................................         ........    
+........        ...............................................................        .........    
+.........       ..............     ...........................  ...............         ........    
+.........       ..............     ...........................    ..............        ........    
+.........       ..............     ...........................    ..............       .........    
+.........       ..............     ...........................    .............        .........    
+ ........       ..............     ...........................    ..............      .........     
+ .........      ...............    ...........................    ..............      ........      
+  .........      ..............    ...........................    ..............     ..........     
+  ..........    ................. ............................    ..............    ..............  
+   ..........   ................................................. ..............  ................. 
+    ..........  ....................................................................................
+     ...............................................................................................
+      .........................................  ...................................................
+        .....................................      ...............................................  
+         ..................................         .............................................   
+           ..............................            .............   ...........................    
+             ............. ...........             .................................    ......      
+               .............                     ..................................        .        
+                 .............                  ..................................                  
+                   .............               ..................................                   
+                      ............             ................................                     
+                       .............            ..............................                      
+                          ............             ........................                         
+                           .............               ...............                              
+                              ............           .............                                  
+                               ..............     ..............                                    
+                                 .............................                                      
+                                    ........................                                        
+                                      ....................                                          
+                                        ................                                            
+                                          ............                                              
+                                            .......                                                 </pre>
+</div>
+
+<div id="lyric">
+  <div id="lyric-text"></div>
+  <div id="lyric-attr"></div>
+</div>
+
+<div id="links">
+  <a id="contact-link" href="mailto:admin@bladee.fyi">contact</a>
+  <a href="https://discord.gg/leandoer" target="_blank" rel="noopener">discord</a>
+</div>
+
+<button id="mute-btn" aria-label="toggle audio">
+  <svg id="vol-on" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>
+  <svg id="vol-off" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>
+</button>
+
+<iframe id="yt-audio" title="audio" allow="autoplay; encrypted-media"></iframe>
+
+<div id="start-overlay">
+  <div id="start-btn">click anywhere to enter</div>
+</div>
+
+<script>
+  // To always play a specific song while styling, set FORCE to its id. Otherwise null = random.
+  const FORCE = null;
+
+  // NOTE: Fill in the `lyric` strings yourself with the snippets you want to display.
+  // You can grab the originals from "View Page Source" on bladee.com.
+  const SONGS = [
+    { id: "tldr",       file: "https://bladee.com/tldr.mp4",          youtube: "JiwpG284QPk", lyric: "", title: "bladee & mechatok — tldr" },
+    { id: "red-velvet", file: "https://bladee.com/red-velvet.mp4",    youtube: "rsGDmEPP-Bw", lyric: "", title: "bladee x yung lean — red velvet" },
+    { id: "victim",     file: "https://bladee.com/victim.mp4",        youtube: "HDajKZ3ytdY", lyric: "", title: "bladee — victim" },
+    { id: "obedient",   file: "https://bladee.com/obedient.mp4",      youtube: "2KkMyDSrBVI", lyric: "", title: "bladee & ecco2k — obedient" },
+    { id: "be-nice",    file: "https://bladee.com/be-nice-to-me.mp4", youtube: "vcAp4nmTZCA", lyric: "", title: "bladee — be nice to me" },
+    { id: "trashstar",  file: "https://bladee.com/trashstar.mp4",     youtube: "4bQrqmKCREk", lyric: "", title: "bladee — trashstar" },
+    { id: "reborn",     file: "https://bladee.com/reborn.mp4",        youtube: "xN-tvjnA3rA", lyric: "", title: "bladee — reborn" }
+  ];
+
+  const CHARSETS = [
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789@#$%^&*()[]{}|<>?!~",
+    "01",
+    "アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワヲン",
+    "0123456789ABCDEF",
+    "!@#$%^&*()_+-=[]{}|;':\",./<>?~`\\░▒▓│┤╣║╗╝┐└┴┬├─┼╚╔╩╦╠═╬┘┌█▄▌▐▀"
+  ];
+
+  const CHARSET  = CHARSETS[Math.floor(Math.random() * CHARSETS.length)];
+  const SPEED    = 2;
+  const DENSITY  = 80;
+  const FONTSIZE = 10;
+
+  const canvas    = document.getElementById("c");
+  const ctx       = canvas.getContext("2d");
+  const video     = document.getElementById("bg-video");
+  const overlay   = document.getElementById("start-overlay");
+  const links     = document.getElementById("links");
+  const content   = document.getElementById("content");
+  const lyricEl   = document.getElementById("lyric");
+  const lyricText = document.getElementById("lyric-text");
+  const lyricAttr = document.getElementById("lyric-attr");
+  const ytAudio   = document.getElementById("yt-audio");
+  const muteBtn   = document.getElementById("mute-btn");
+  const volOn     = document.getElementById("vol-on");
+  const volOff    = document.getElementById("vol-off");
+
+  let drops  = [];
+  let muted  = false;
+
+  const pick = (FORCE && SONGS.find(s => s.id === FORCE)) || SONGS[Math.floor(Math.random() * SONGS.length)];
+  if (pick) {
+    video.src             = pick.file;
+    lyricText.textContent = pick.lyric ? "\u201C" + pick.lyric + "\u201D" : "";
+    lyricAttr.textContent = pick.title;
+  }
+
+  function ytUrl(songId, isMuted) {
+    return "https://www.youtube.com/embed/" + songId
+      + "?autoplay=1&controls=0&loop=1&playlist=" + songId
+      + "&modestbranding=1&rel=0&playsinline=1&iv_load_policy=3"
+      + "&mute=" + (isMuted ? 1 : 0);
+  }
+
+  overlay.addEventListener("click", () => {
+    video.play().catch(() => {});
+    ytAudio.src = ytUrl(pick.youtube, muted);
+    overlay.style.display = "none";
+    canvas.style.opacity = "1";
+    content.style.opacity = "1";
+    links.style.opacity = "1";
+    links.style.pointerEvents = "auto";
+    lyricEl.style.opacity = "1";
+    muteBtn.classList.add("visible");
+  });
+
+  muteBtn.addEventListener("click", () => {
+    muted = !muted;
+    volOn.style.display  = muted ? "none" : "block";
+    volOff.style.display = muted ? "block" : "none";
+    ytAudio.src = ytUrl(pick.youtube, muted);
+  });
+
+  function rchar() { return CHARSET[Math.floor(Math.random() * CHARSET.length)]; }
+
+  function init() {
+    canvas.width  = window.innerWidth;
+    canvas.height = window.innerHeight;
+    const cols = Math.floor(canvas.width / FONTSIZE);
+    drops = [];
+    for (let i = 0; i < cols; i++) {
+      if (Math.random() * 100 < DENSITY) {
+        drops.push({
+          x:      i,
+          y:      Math.random() * -(canvas.height / FONTSIZE),
+          speed:  0.3 + Math.random() * 0.7,
+          length: 3 + Math.floor(Math.random() * 5),
+          chars:  []
+        });
+      }
+    }
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.font = FONTSIZE + "px monospace";
+
+    for (const drop of drops) {
+      drop.y += drop.speed * SPEED;
+      drop.chars.push(rchar());
+      if (drop.chars.length > drop.length) drop.chars.shift();
+
+      for (let j = 0; j < drop.chars.length; j++) {
+        const py = (drop.y - j) * FONTSIZE;
+        if (py < 0 || py > canvas.height) continue;
+        const b = Math.floor(255 * (1 - j / drop.length));
+        ctx.fillStyle = "rgb(" + b + "," + b + "," + b + ")";
+        ctx.fillText(drop.chars[drop.chars.length - 1 - j], drop.x * FONTSIZE, py);
+      }
+
+      if (drop.y * FONTSIZE > canvas.height + drop.length * FONTSIZE) {
+        drop.y = Math.random() * -20;
+        drop.chars = [];
+      }
+    }
+  }
+
+  let last = 0;
+  function loop(ts) {
+    if (ts - last >= 33) { last = ts; draw(); }
+    requestAnimationFrame(loop);
+  }
+
+  window.addEventListener("resize", init);
+  init();
+  requestAnimationFrame(loop);
+</script>
+</body>
+</html>
