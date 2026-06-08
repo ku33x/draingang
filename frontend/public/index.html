@@ -131,11 +131,14 @@
   const lyricAttr = document.getElementById("lyric-attr");
 
   let drops = [];
-  let unmuted = false;
+  let started = false;
 
   const pick = (FORCE && SONGS.find(s => s.id === FORCE)) || SONGS[Math.floor(Math.random() * SONGS.length)];
   if (pick) {
     video.src = pick.file;
+    // Preload but DO NOT play yet — we want it to start when the audio kicks in
+    video.load();
+    video.pause();
     lyricText.textContent = pick.lyric ? "\u201C" + pick.lyric + "\u201D" : "";
     lyricAttr.textContent = pick.title;
   }
@@ -147,6 +150,13 @@
     if (pendingStart) buildPlayer();
   };
 
+  function startVisualsSyncedToAudio() {
+    if (started) return;
+    started = true;
+    video.currentTime = 0;
+    video.play().catch(() => {});
+  }
+
   function buildPlayer() {
     player = new YT.Player("yt-player", {
       width: "1", height: "1", videoId: pick.youtube,
@@ -154,8 +164,9 @@
       events: {
         onReady: function (e) { try { e.target.playVideo(); } catch (err) {} },
         onStateChange: function (e) {
-          if (e.data === YT.PlayerState.PLAYING && !unmuted) {
-            unmuted = true;
+          if (e.data === YT.PlayerState.PLAYING) {
+            // Audio just kicked in — start the visuals in sync
+            startVisualsSyncedToAudio();
             try { e.target.unMute(); } catch (err) {}
             try { e.target.setVolume(100); } catch (err) {}
           }
@@ -165,7 +176,6 @@
   }
 
   overlay.addEventListener("click", () => {
-    video.play().catch(() => {});
     if (apiReady) buildPlayer(); else pendingStart = true;
     overlay.style.display = "none";
     canvas.style.opacity = "1";
@@ -173,6 +183,8 @@
     links.style.opacity = "1";
     links.style.pointerEvents = "auto";
     lyricEl.style.opacity = "1";
+    // Safety fallback: if YouTube takes longer than 6s, start the video anyway
+    setTimeout(startVisualsSyncedToAudio, 6000);
   });
 
   function rchar() { return CHARSET[Math.floor(Math.random() * CHARSET.length)]; }
