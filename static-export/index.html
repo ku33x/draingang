@@ -249,12 +249,13 @@
   <svg id="vol-off" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>
 </button>
 
-<iframe id="yt-audio" title="audio" allow="autoplay; encrypted-media"></iframe>
+<iframe id="yt-audio" title="audio" allow="autoplay; encrypted-media" src="about:blank"></iframe>
 
 <div id="start-overlay">
   <div id="start-btn">click anywhere to enter</div>
 </div>
 
+<script src="https://www.youtube.com/iframe_api"></script>
 <script>
   // To always play a specific song while styling, set FORCE to its id. Otherwise null = random.
   const FORCE = null;
@@ -306,17 +307,40 @@
     lyricAttr.textContent = pick.title;
   }
 
-  function ytUrl(songId, isMuted) {
+  function ytUrl(songId) {
     return "https://www.youtube.com/embed/" + songId
       + "?autoplay=1&controls=0&loop=1&playlist=" + songId
       + "&modestbranding=1&rel=0&playsinline=1&iv_load_policy=3"
-      + "&mute=" + (isMuted ? 1 : 0);
+      + "&enablejsapi=1&origin=" + encodeURIComponent(window.location.origin);
+  }
+
+  let player = null;
+  let apiReady = false;
+  let pendingStart = false;
+
+  // YouTube IFrame API ready callback (called by the API script)
+  window.onYouTubeIframeAPIReady = function () {
+    apiReady = true;
+    if (pendingStart) startAudio();
+  };
+
+  function startAudio() {
+    // Set src so the iframe loads inside YouTube origin, then attach a player to it.
+    ytAudio.src = ytUrl(pick.youtube);
+    player = new YT.Player("yt-audio", {
+      events: {
+        onReady: function (e) {
+          // Start unmuted; the user click on the overlay counts as a gesture.
+          try { e.target.unMute(); } catch (err) {}
+          try { e.target.playVideo(); } catch (err) {}
+        }
+      }
+    });
   }
 
   overlay.addEventListener("click", () => {
     video.play().catch(() => {});
-    // start youtube audio
-    ytAudio.src = ytUrl(pick.youtube, muted);
+    if (apiReady) startAudio(); else pendingStart = true;
     overlay.style.display = "none";
     canvas.style.opacity = "1";
     content.style.opacity = "1";
@@ -330,8 +354,9 @@
     muted = !muted;
     volOn.style.display  = muted ? "none" : "block";
     volOff.style.display = muted ? "block" : "none";
-    // reload the iframe with mute param toggled
-    ytAudio.src = ytUrl(pick.youtube, muted);
+    if (player) {
+      try { muted ? player.mute() : player.unMute(); } catch (err) {}
+    }
   });
 
   function rchar() { return CHARSET[Math.floor(Math.random() * CHARSET.length)]; }
