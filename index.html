@@ -22,6 +22,24 @@
     #start-btn { font-size: 13px; color: rgba(255,255,255,0.4); letter-spacing: 0.2em; text-transform: lowercase; border: 1px solid rgba(255,255,255,0.15); padding: 10px 24px; border-radius: 40px; pointer-events: none; transition: color 0.3s, border-color 0.3s; min-width: 240px; text-align: center; }
     #start-overlay:hover #start-btn { color: rgba(255,255,255,0.8); border-color: rgba(255,255,255,0.4); }
   </style>
+
+  <!-- Register the YT API callback BEFORE the API script tag loads,
+       so a cached/fast-loading API never fires the callback before we're ready. -->
+  <script>
+    window.__ytReady = new Promise((resolve) => {
+      // If a previous page-load already loaded YT, the constructor is already present.
+      if (window.YT && window.YT.Player) { resolve(true); return; }
+      // Otherwise, the API will invoke this global when it's ready.
+      window.onYouTubeIframeAPIReady = function () { resolve(true); };
+      // Failsafe poll in case the callback is somehow missed (cache edge cases).
+      const pollStart = Date.now();
+      const poll = setInterval(() => {
+        if (window.YT && window.YT.Player) { clearInterval(poll); resolve(true); }
+        else if (Date.now() - pollStart > 12000) { clearInterval(poll); /* main script will time out gracefully */ }
+      }, 200);
+    });
+  </script>
+  <script src="https://www.youtube.com/iframe_api"></script>
 </head>
 <body>
 
@@ -95,18 +113,17 @@
   <div id="start-btn">click anywhere to enter</div>
 </div>
 
-<script src="https://www.youtube.com/iframe_api"></script>
 <script>
 (() => {
   "use strict";
 
   // ---------- config ----------
   const FORCE = null;
-  const VIDEO_READY_TIMEOUT_MS = 8000;
-  const AUDIO_READY_TIMEOUT_MS = 8000;
-  const API_READY_TIMEOUT_MS   = 10000;
-  const DRIFT_CHECK_INTERVAL_MS = 5000;   // periodic sync nudge
-  const DRIFT_TOLERANCE_S       = 1.5;    // re-sync if video > 1.5s out from audio loop point
+  const VIDEO_READY_TIMEOUT_MS  = 8000;
+  const AUDIO_READY_TIMEOUT_MS  = 8000;
+  const API_READY_TIMEOUT_MS    = 10000;
+  const DRIFT_CHECK_INTERVAL_MS = 5000;
+  const DRIFT_TOLERANCE_S       = 1.5;
 
   const SONGS = [
     { id: "tldr",       file: "https://bladee.com/tldr.mp4",          youtube: "JiwpG284QPk", lyric: "", title: "bladee & mechatok — tldr" },
@@ -132,7 +149,6 @@
   const ctx       = canvas.getContext("2d");
   const video     = $("bg-video");
   const overlay   = $("start-overlay");
-  const startBtn  = $("start-btn");
   const links     = $("links");
   const content   = $("content");
   const lyricEl   = $("lyric");
@@ -159,13 +175,12 @@
 
   // ---------- state ----------
   const state = {
-    apiReady: false,
     entered: false,
     started: false,
     audioReady: false,
     player: null,
     driftTimer: null,
-    audioStartedAtPerf: 0,   // performance.now() when audio started
+    audioStartedAtPerf: 0,
     pageHidden: document.hidden === true
   };
 
@@ -198,15 +213,7 @@
     });
   }
 
-  // ---------- YouTube IFrame API ----------
-  let apiReadyResolver;
-  const apiReadyPromise = new Promise((res) => { apiReadyResolver = res; });
-
-  window.onYouTubeIframeAPIReady = function () {
-    state.apiReady = true;
-    apiReadyResolver(true);
-  };
-
+  // ---------- YouTube IFrame API (the pre-registered promise lives on window.__ytReady) ----------
   function buildPlayer() {
     return new Promise((resolve) => {
       let firstPlay = false;
@@ -246,21 +253,19 @@
     if (expected == null) return;
     const actual = video.currentTime;
     const dur = video.duration;
-    // Compute shortest signed distance on a circular timeline (looped video)
     let diff = expected - actual;
     if (Math.abs(diff) > dur / 2) diff = diff - Math.sign(diff) * dur;
-    if (Math.abs(diff) > DRIFT_TOLERANCE_S) {
-      safe(() => { video.currentTime = expected; });
-    }
+    if (Math.abs(diff) > DRIFT_TOLERANCE_S) safe(() => { video.currentTime = expected; });
   }
 
   // ---------- the synced start ----------
   async function startSynced() {
     if (state.started) return;
 
-    await withTimeout(apiReadyPromise, API_READY_TIMEOUT_MS, "yt-api");
+    await withTimeout(window.__ytReady, API_READY_TIMEOUT_MS, "yt-api");
 
-    const playerPromise = state.apiReady ? buildPlayer() : Promise.resolve(null);
+    const apiAvailable = !!(window.YT && window.YT.Player);
+    const playerPromise = apiAvailable ? buildPlayer() : Promise.resolve(null);
     const videoPromise  = whenVideoReady();
 
     await Promise.all([
@@ -271,7 +276,6 @@
     if (state.started) return;
     state.started = true;
 
-    // Fallback if YT never actually flipped to PLAYING
     if (!state.audioStartedAtPerf) state.audioStartedAtPerf = performance.now();
 
     safe(() => { video.currentTime = 0; });
@@ -282,15 +286,12 @@
       safe(() => state.player.setVolume(100));
     }
 
-    // periodic drift check
     if (state.driftTimer) clearInterval(state.driftTimer);
     state.driftTimer = setInterval(checkDrift, DRIFT_CHECK_INTERVAL_MS);
   }
 
   // ---------- entry click ----------
-  overlay.addEventListener("click", onEnter);
-
-  function onEnter() {
+  overlay.addEventListener("click", () => {
     if (state.entered) return;
     state.entered = true;
 
@@ -305,59 +306,44 @@
     lyricEl.style.opacity  = "1";
 
     startSynced();
-  }
+  });
 
-  // ---------- page lifecycle hooks ----------
-  // 1) Page visibility: pause music when tab is hidden so it doesn't drain bandwidth,
-  //    and re-sync video to expected position on return.
+  // ---------- page lifecycle ----------
   document.addEventListener("visibilitychange", () => {
     state.pageHidden = document.hidden === true;
     if (!state.started) return;
 
     if (document.hidden) {
       safe(() => video.pause());
-      // Leave YT player running — browser will throttle background tabs anyway
     } else {
-      // back to visible: re-sync video and resume
       const expected = expectedVideoPosition();
       if (expected != null) safe(() => { video.currentTime = expected; });
       safe(() => video.play());
-      // Nudge audio in case it got paused by the browser when backgrounded
       if (state.player && state.player.getPlayerState) {
         try {
-          const ps = state.player.getPlayerState();
-          if (ps !== YT.PlayerState.PLAYING) state.player.playVideo();
+          if (state.player.getPlayerState() !== YT.PlayerState.PLAYING) state.player.playVideo();
         } catch (e) {}
       }
     }
   });
 
-  // 2) BFCache restore (back/forward navigation):
-  //    If the page is restored from the back-forward cache, the YT iframe state
-  //    is unreliable. Force a clean reload so we get a fresh, in-sync experience.
-  window.addEventListener("pageshow", (e) => {
-    if (e.persisted) window.location.reload();
-  });
+  // BFCache restore → fresh reload
+  window.addEventListener("pageshow", (e) => { if (e.persisted) window.location.reload(); });
 
-  // 3) Unload: clean up audio so it doesn't linger in background tabs
+  // Cleanup on unload
   window.addEventListener("pagehide", () => {
     if (state.driftTimer) clearInterval(state.driftTimer);
     safe(() => video.pause());
     if (state.player && state.player.stopVideo) safe(() => state.player.stopVideo());
   });
 
-  // 4) Network changes: if user briefly drops offline, force a resync when back online
+  // Network reconnect → resume + resync
   window.addEventListener("online", () => {
     if (!state.started) return;
     if (state.player && state.player.playVideo) safe(() => state.player.playVideo());
     safe(() => video.play());
     checkDrift();
   });
-
-  // 5) Hard refresh detection: clear sessionStorage marker if you ever add one.
-  //    Browsers reset transient state on refresh automatically, so this is
-  //    a sentinel for future use (e.g. "show overlay once per session").
-  try { sessionStorage.removeItem("bladee_entered"); } catch (e) {}
 
   // ---------- matrix rain ----------
   const SPEED = 2, DENSITY = 80, FONTSIZE = 10;
@@ -384,7 +370,7 @@
   }
 
   function drawRain() {
-    if (state.pageHidden) return; // skip work when tab is in background
+    if (state.pageHidden) return;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.font = FONTSIZE + "px monospace";
     for (const d of drops) {
