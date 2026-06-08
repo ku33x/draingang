@@ -18,7 +18,7 @@
     #links a { font-size: 12px; color: rgba(255,255,255,0.35); text-decoration: none; letter-spacing: 0.15em; transition: color 0.2s ease; }
     #links a:hover { color: rgba(255,255,255,0.8); }
     #yt-host { position: fixed; width: 1px; height: 1px; top: -9999px; left: -9999px; opacity: 0; pointer-events: none; }
-    #start-overlay { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+    #start-overlay { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: opacity 0.2s ease; }
     #start-btn { font-size: 13px; color: rgba(255,255,255,0.4); letter-spacing: 0.2em; text-transform: lowercase; border: 1px solid rgba(255,255,255,0.15); padding: 10px 24px; border-radius: 40px; pointer-events: none; transition: color 0.3s, border-color 0.3s; min-width: 240px; text-align: center; }
     #start-overlay:hover #start-btn { color: rgba(255,255,255,0.8); border-color: rgba(255,255,255,0.4); }
   </style>
@@ -102,9 +102,11 @@
 
   // ---------- config ----------
   const FORCE = null;
-  const VIDEO_READY_TIMEOUT_MS = 8000;   // give up waiting on video buffering
-  const AUDIO_READY_TIMEOUT_MS = 8000;   // give up waiting on yt PLAYING state
-  const API_READY_TIMEOUT_MS   = 10000;  // give up waiting on the YT API script
+  const VIDEO_READY_TIMEOUT_MS = 8000;
+  const AUDIO_READY_TIMEOUT_MS = 8000;
+  const API_READY_TIMEOUT_MS   = 10000;
+  const DRIFT_CHECK_INTERVAL_MS = 5000;   // periodic sync nudge
+  const DRIFT_TOLERANCE_S       = 1.5;    // re-sync if video > 1.5s out from audio loop point
 
   const SONGS = [
     { id: "tldr",       file: "https://bladee.com/tldr.mp4",          youtube: "JiwpG284QPk", lyric: "", title: "bladee & mechatok — tldr" },
@@ -126,16 +128,30 @@
 
   // ---------- DOM ----------
   const $ = (id) => document.getElementById(id);
-  const canvas = $("c");
-  const ctx = canvas.getContext("2d");
-  const video = $("bg-video");
-  const overlay = $("start-overlay");
-  const startBtn = $("start-btn");
-  const links = $("links");
-  const content = $("content");
-  const lyricEl = $("lyric");
+  const canvas    = $("c");
+  const ctx       = canvas.getContext("2d");
+  const video     = $("bg-video");
+  const overlay   = $("start-overlay");
+  const startBtn  = $("start-btn");
+  const links     = $("links");
+  const content   = $("content");
+  const lyricEl   = $("lyric");
   const lyricText = $("lyric-text");
   const lyricAttr = $("lyric-attr");
+
+  // ---------- helpers ----------
+  function safe(fn) { try { return fn(); } catch (e) { return undefined; } }
+  function setText(el, txt) { if (el) el.textContent = txt; }
+  function withTimeout(promise, ms, label) {
+    return new Promise((resolve) => {
+      let done = false;
+      const t = setTimeout(() => { if (!done) { done = true; resolve({ ok: false, reason: "timeout:" + label }); } }, ms);
+      Promise.resolve(promise).then(
+        (v) => { if (!done) { done = true; clearTimeout(t); resolve({ ok: true, value: v }); } },
+        (e) => { if (!done) { done = true; clearTimeout(t); resolve({ ok: false, reason: String(e) }); } }
+      );
+    });
+  }
 
   // ---------- random picks ----------
   const CHARSET = CHARSETS[Math.floor(Math.random() * CHARSETS.length)];
@@ -145,27 +161,13 @@
   const state = {
     apiReady: false,
     entered: false,
-    videoReady: false,
-    audioReady: false,
     started: false,
+    audioReady: false,
     player: null,
+    driftTimer: null,
+    audioStartedAtPerf: 0,   // performance.now() when audio started
+    pageHidden: document.hidden === true
   };
-
-  // ---------- helpers ----------
-  function safe(fn) { try { return fn(); } catch (e) { /* swallow */ } }
-
-  function setText(el, txt) { if (el) el.textContent = txt; }
-
-  function withTimeout(promise, ms, label) {
-    return new Promise((resolve) => {
-      let done = false;
-      const t = setTimeout(() => { if (!done) { done = true; resolve({ ok: false, reason: "timeout:" + label }); } }, ms);
-      promise.then(
-        (v) => { if (!done) { done = true; clearTimeout(t); resolve({ ok: true, value: v }); } },
-        (e) => { if (!done) { done = true; clearTimeout(t); resolve({ ok: false, reason: String(e) }); } }
-      );
-    });
-  }
 
   // ---------- init song display + preload video ----------
   function initSong() {
@@ -173,17 +175,16 @@
     setText(lyricText, pick.lyric ? "\u201C" + pick.lyric + "\u201D" : "");
     setText(lyricAttr, pick.title);
     video.src = pick.file;
-    video.load();
+    safe(() => video.load());
     safe(() => video.pause());
   }
 
   // ---------- video readiness ----------
-  // readyState >= 3 (HAVE_FUTURE_DATA) means we can play without immediate buffer stall
   function whenVideoReady() {
     return new Promise((resolve) => {
       if (video.readyState >= 3) return resolve();
       const onReady = () => { cleanup(); resolve(); };
-      const onError = () => { cleanup(); resolve(); }; // fail-open: start anyway
+      const onError = () => { cleanup(); resolve(); };
       function cleanup() {
         video.removeEventListener("canplaythrough", onReady);
         video.removeEventListener("canplay", onReady);
@@ -208,7 +209,7 @@
 
   function buildPlayer() {
     return new Promise((resolve) => {
-      let audioStarted = false;
+      let firstPlay = false;
       state.player = new YT.Player("yt-player", {
         width: "1", height: "1", videoId: pick.youtube,
         playerVars: {
@@ -217,59 +218,79 @@
           playsinline: 1, iv_load_policy: 3, disablekb: 1
         },
         events: {
-          onReady: (e) => {
-            // Make sure playback gets going (autoplay should already do this, but be defensive)
-            safe(() => e.target.playVideo());
-          },
+          onReady: (e) => { safe(() => e.target.playVideo()); },
           onStateChange: (e) => {
-            if (e.data === YT.PlayerState.PLAYING && !audioStarted) {
-              audioStarted = true;
+            if (e.data === YT.PlayerState.PLAYING && !firstPlay) {
+              firstPlay = true;
               state.audioReady = true;
+              state.audioStartedAtPerf = performance.now();
               resolve(state.player);
             }
           },
-          onError: () => {
-            // Fail-open: report as ready so we can at least show visuals
-            if (!audioStarted) { audioStarted = true; resolve(null); }
-          }
+          onError: () => { if (!firstPlay) { firstPlay = true; resolve(null); } }
         }
       });
     });
+  }
+
+  // ---------- drift correction ----------
+  function expectedVideoPosition() {
+    if (!state.audioStartedAtPerf || !video.duration) return null;
+    const elapsedS = (performance.now() - state.audioStartedAtPerf) / 1000;
+    return elapsedS % video.duration;
+  }
+
+  function checkDrift() {
+    if (!state.started || video.paused || state.pageHidden) return;
+    const expected = expectedVideoPosition();
+    if (expected == null) return;
+    const actual = video.currentTime;
+    const dur = video.duration;
+    // Compute shortest signed distance on a circular timeline (looped video)
+    let diff = expected - actual;
+    if (Math.abs(diff) > dur / 2) diff = diff - Math.sign(diff) * dur;
+    if (Math.abs(diff) > DRIFT_TOLERANCE_S) {
+      safe(() => { video.currentTime = expected; });
+    }
   }
 
   // ---------- the synced start ----------
   async function startSynced() {
     if (state.started) return;
 
-    // 1) ensure YT API loaded
     await withTimeout(apiReadyPromise, API_READY_TIMEOUT_MS, "yt-api");
 
-    // 2) build player + wait for video buffer in parallel
     const playerPromise = state.apiReady ? buildPlayer() : Promise.resolve(null);
     const videoPromise  = whenVideoReady();
 
-    const [audioRes, videoRes] = await Promise.all([
+    await Promise.all([
       withTimeout(playerPromise, AUDIO_READY_TIMEOUT_MS, "yt-playing"),
       withTimeout(videoPromise,  VIDEO_READY_TIMEOUT_MS, "video-ready")
     ]);
 
-    if (state.started) return; // guard against re-entry
+    if (state.started) return;
     state.started = true;
 
-    // 3) flip visuals on now
+    // Fallback if YT never actually flipped to PLAYING
+    if (!state.audioStartedAtPerf) state.audioStartedAtPerf = performance.now();
+
     safe(() => { video.currentTime = 0; });
     safe(() => video.play());
 
-    // 4) unmute YT audio in the same tick — gesture trust has been preserved
-    //    through the chain because we kicked off from a user click handler.
     if (state.player) {
       safe(() => state.player.unMute());
       safe(() => state.player.setVolume(100));
     }
+
+    // periodic drift check
+    if (state.driftTimer) clearInterval(state.driftTimer);
+    state.driftTimer = setInterval(checkDrift, DRIFT_CHECK_INTERVAL_MS);
   }
 
   // ---------- entry click ----------
-  overlay.addEventListener("click", () => {
+  overlay.addEventListener("click", onEnter);
+
+  function onEnter() {
     if (state.entered) return;
     state.entered = true;
 
@@ -277,14 +298,66 @@
     overlay.style.opacity = "0";
     setTimeout(() => { overlay.style.display = "none"; }, 200);
 
-    canvas.style.opacity = "1";
-    content.style.opacity = "1";
-    links.style.opacity = "1";
+    canvas.style.opacity   = "1";
+    content.style.opacity  = "1";
+    links.style.opacity    = "1";
     links.style.pointerEvents = "auto";
-    lyricEl.style.opacity = "1";
+    lyricEl.style.opacity  = "1";
 
     startSynced();
+  }
+
+  // ---------- page lifecycle hooks ----------
+  // 1) Page visibility: pause music when tab is hidden so it doesn't drain bandwidth,
+  //    and re-sync video to expected position on return.
+  document.addEventListener("visibilitychange", () => {
+    state.pageHidden = document.hidden === true;
+    if (!state.started) return;
+
+    if (document.hidden) {
+      safe(() => video.pause());
+      // Leave YT player running — browser will throttle background tabs anyway
+    } else {
+      // back to visible: re-sync video and resume
+      const expected = expectedVideoPosition();
+      if (expected != null) safe(() => { video.currentTime = expected; });
+      safe(() => video.play());
+      // Nudge audio in case it got paused by the browser when backgrounded
+      if (state.player && state.player.getPlayerState) {
+        try {
+          const ps = state.player.getPlayerState();
+          if (ps !== YT.PlayerState.PLAYING) state.player.playVideo();
+        } catch (e) {}
+      }
+    }
   });
+
+  // 2) BFCache restore (back/forward navigation):
+  //    If the page is restored from the back-forward cache, the YT iframe state
+  //    is unreliable. Force a clean reload so we get a fresh, in-sync experience.
+  window.addEventListener("pageshow", (e) => {
+    if (e.persisted) window.location.reload();
+  });
+
+  // 3) Unload: clean up audio so it doesn't linger in background tabs
+  window.addEventListener("pagehide", () => {
+    if (state.driftTimer) clearInterval(state.driftTimer);
+    safe(() => video.pause());
+    if (state.player && state.player.stopVideo) safe(() => state.player.stopVideo());
+  });
+
+  // 4) Network changes: if user briefly drops offline, force a resync when back online
+  window.addEventListener("online", () => {
+    if (!state.started) return;
+    if (state.player && state.player.playVideo) safe(() => state.player.playVideo());
+    safe(() => video.play());
+    checkDrift();
+  });
+
+  // 5) Hard refresh detection: clear sessionStorage marker if you ever add one.
+  //    Browsers reset transient state on refresh automatically, so this is
+  //    a sentinel for future use (e.g. "show overlay once per session").
+  try { sessionStorage.removeItem("bladee_entered"); } catch (e) {}
 
   // ---------- matrix rain ----------
   const SPEED = 2, DENSITY = 80, FONTSIZE = 10;
@@ -311,6 +384,7 @@
   }
 
   function drawRain() {
+    if (state.pageHidden) return; // skip work when tab is in background
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.font = FONTSIZE + "px monospace";
     for (const d of drops) {
