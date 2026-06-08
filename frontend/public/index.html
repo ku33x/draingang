@@ -19,7 +19,7 @@
     #links a:hover { color: rgba(255,255,255,0.8); }
     #yt-host { position: fixed; width: 1px; height: 1px; top: -9999px; left: -9999px; opacity: 0; pointer-events: none; }
     #start-overlay { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; cursor: pointer; }
-    #start-btn { font-size: 13px; color: rgba(255,255,255,0.4); letter-spacing: 0.2em; text-transform: lowercase; border: 1px solid rgba(255,255,255,0.15); padding: 10px 24px; border-radius: 40px; pointer-events: none; transition: color 0.3s, border-color 0.3s; }
+    #start-btn { font-size: 13px; color: rgba(255,255,255,0.4); letter-spacing: 0.2em; text-transform: lowercase; border: 1px solid rgba(255,255,255,0.15); padding: 10px 24px; border-radius: 40px; pointer-events: none; transition: color 0.3s, border-color 0.3s; min-width: 240px; text-align: center; }
     #start-overlay:hover #start-btn { color: rgba(255,255,255,0.8); border-color: rgba(255,255,255,0.4); }
   </style>
 </head>
@@ -97,7 +97,14 @@
 
 <script src="https://www.youtube.com/iframe_api"></script>
 <script>
+(() => {
+  "use strict";
+
+  // ---------- config ----------
   const FORCE = null;
+  const VIDEO_READY_TIMEOUT_MS = 8000;   // give up waiting on video buffering
+  const AUDIO_READY_TIMEOUT_MS = 8000;   // give up waiting on yt PLAYING state
+  const API_READY_TIMEOUT_MS   = 10000;  // give up waiting on the YT API script
 
   const SONGS = [
     { id: "tldr",       file: "https://bladee.com/tldr.mp4",          youtube: "JiwpG284QPk", lyric: "", title: "bladee & mechatok — tldr" },
@@ -117,114 +124,225 @@
     "!@#$%^&*()_+-=[]{}|;':\",./<>?~`\\░▒▓│┤╣║╗╝┐└┴┬├─┼╚╔╩╦╠═╬┘┌█▄▌▐▀"
   ];
 
-  const CHARSET = CHARSETS[Math.floor(Math.random() * CHARSETS.length)];
-  const SPEED = 2, DENSITY = 80, FONTSIZE = 10;
-
-  const canvas = document.getElementById("c");
+  // ---------- DOM ----------
+  const $ = (id) => document.getElementById(id);
+  const canvas = $("c");
   const ctx = canvas.getContext("2d");
-  const video = document.getElementById("bg-video");
-  const overlay = document.getElementById("start-overlay");
-  const links = document.getElementById("links");
-  const content = document.getElementById("content");
-  const lyricEl = document.getElementById("lyric");
-  const lyricText = document.getElementById("lyric-text");
-  const lyricAttr = document.getElementById("lyric-attr");
+  const video = $("bg-video");
+  const overlay = $("start-overlay");
+  const startBtn = $("start-btn");
+  const links = $("links");
+  const content = $("content");
+  const lyricEl = $("lyric");
+  const lyricText = $("lyric-text");
+  const lyricAttr = $("lyric-attr");
 
-  let drops = [];
-  let started = false;
-
+  // ---------- random picks ----------
+  const CHARSET = CHARSETS[Math.floor(Math.random() * CHARSETS.length)];
   const pick = (FORCE && SONGS.find(s => s.id === FORCE)) || SONGS[Math.floor(Math.random() * SONGS.length)];
-  if (pick) {
-    video.src = pick.file;
-    // Preload but DO NOT play yet — we want it to start when the audio kicks in
-    video.load();
-    video.pause();
-    lyricText.textContent = pick.lyric ? "\u201C" + pick.lyric + "\u201D" : "";
-    lyricAttr.textContent = pick.title;
-  }
 
-  let player = null, apiReady = false, pendingStart = false;
-
-  window.onYouTubeIframeAPIReady = function () {
-    apiReady = true;
-    if (pendingStart) buildPlayer();
+  // ---------- state ----------
+  const state = {
+    apiReady: false,
+    entered: false,
+    videoReady: false,
+    audioReady: false,
+    started: false,
+    player: null,
   };
 
-  function startVisualsSyncedToAudio() {
-    if (started) return;
-    started = true;
-    video.currentTime = 0;
-    video.play().catch(() => {});
-  }
+  // ---------- helpers ----------
+  function safe(fn) { try { return fn(); } catch (e) { /* swallow */ } }
 
-  function buildPlayer() {
-    player = new YT.Player("yt-player", {
-      width: "1", height: "1", videoId: pick.youtube,
-      playerVars: { autoplay: 1, mute: 1, controls: 0, loop: 1, playlist: pick.youtube, modestbranding: 1, rel: 0, playsinline: 1, iv_load_policy: 3 },
-      events: {
-        onReady: function (e) { try { e.target.playVideo(); } catch (err) {} },
-        onStateChange: function (e) {
-          if (e.data === YT.PlayerState.PLAYING) {
-            // Audio just kicked in — start the visuals in sync
-            startVisualsSyncedToAudio();
-            try { e.target.unMute(); } catch (err) {}
-            try { e.target.setVolume(100); } catch (err) {}
-          }
-        }
-      }
+  function setText(el, txt) { if (el) el.textContent = txt; }
+
+  function withTimeout(promise, ms, label) {
+    return new Promise((resolve) => {
+      let done = false;
+      const t = setTimeout(() => { if (!done) { done = true; resolve({ ok: false, reason: "timeout:" + label }); } }, ms);
+      promise.then(
+        (v) => { if (!done) { done = true; clearTimeout(t); resolve({ ok: true, value: v }); } },
+        (e) => { if (!done) { done = true; clearTimeout(t); resolve({ ok: false, reason: String(e) }); } }
+      );
     });
   }
 
+  // ---------- init song display + preload video ----------
+  function initSong() {
+    if (!pick) return;
+    setText(lyricText, pick.lyric ? "\u201C" + pick.lyric + "\u201D" : "");
+    setText(lyricAttr, pick.title);
+    video.src = pick.file;
+    video.load();
+    safe(() => video.pause());
+  }
+
+  // ---------- video readiness ----------
+  // readyState >= 3 (HAVE_FUTURE_DATA) means we can play without immediate buffer stall
+  function whenVideoReady() {
+    return new Promise((resolve) => {
+      if (video.readyState >= 3) return resolve();
+      const onReady = () => { cleanup(); resolve(); };
+      const onError = () => { cleanup(); resolve(); }; // fail-open: start anyway
+      function cleanup() {
+        video.removeEventListener("canplaythrough", onReady);
+        video.removeEventListener("canplay", onReady);
+        video.removeEventListener("loadeddata", onReady);
+        video.removeEventListener("error", onError);
+      }
+      video.addEventListener("canplaythrough", onReady, { once: true });
+      video.addEventListener("canplay", onReady, { once: true });
+      video.addEventListener("loadeddata", onReady, { once: true });
+      video.addEventListener("error", onError, { once: true });
+    });
+  }
+
+  // ---------- YouTube IFrame API ----------
+  let apiReadyResolver;
+  const apiReadyPromise = new Promise((res) => { apiReadyResolver = res; });
+
+  window.onYouTubeIframeAPIReady = function () {
+    state.apiReady = true;
+    apiReadyResolver(true);
+  };
+
+  function buildPlayer() {
+    return new Promise((resolve) => {
+      let audioStarted = false;
+      state.player = new YT.Player("yt-player", {
+        width: "1", height: "1", videoId: pick.youtube,
+        playerVars: {
+          autoplay: 1, mute: 1, controls: 0, loop: 1,
+          playlist: pick.youtube, modestbranding: 1, rel: 0,
+          playsinline: 1, iv_load_policy: 3, disablekb: 1
+        },
+        events: {
+          onReady: (e) => {
+            // Make sure playback gets going (autoplay should already do this, but be defensive)
+            safe(() => e.target.playVideo());
+          },
+          onStateChange: (e) => {
+            if (e.data === YT.PlayerState.PLAYING && !audioStarted) {
+              audioStarted = true;
+              state.audioReady = true;
+              resolve(state.player);
+            }
+          },
+          onError: () => {
+            // Fail-open: report as ready so we can at least show visuals
+            if (!audioStarted) { audioStarted = true; resolve(null); }
+          }
+        }
+      });
+    });
+  }
+
+  // ---------- the synced start ----------
+  async function startSynced() {
+    if (state.started) return;
+
+    // 1) ensure YT API loaded
+    await withTimeout(apiReadyPromise, API_READY_TIMEOUT_MS, "yt-api");
+
+    // 2) build player + wait for video buffer in parallel
+    const playerPromise = state.apiReady ? buildPlayer() : Promise.resolve(null);
+    const videoPromise  = whenVideoReady();
+
+    const [audioRes, videoRes] = await Promise.all([
+      withTimeout(playerPromise, AUDIO_READY_TIMEOUT_MS, "yt-playing"),
+      withTimeout(videoPromise,  VIDEO_READY_TIMEOUT_MS, "video-ready")
+    ]);
+
+    if (state.started) return; // guard against re-entry
+    state.started = true;
+
+    // 3) flip visuals on now
+    safe(() => { video.currentTime = 0; });
+    safe(() => video.play());
+
+    // 4) unmute YT audio in the same tick — gesture trust has been preserved
+    //    through the chain because we kicked off from a user click handler.
+    if (state.player) {
+      safe(() => state.player.unMute());
+      safe(() => state.player.setVolume(100));
+    }
+  }
+
+  // ---------- entry click ----------
   overlay.addEventListener("click", () => {
-    if (apiReady) buildPlayer(); else pendingStart = true;
-    overlay.style.display = "none";
+    if (state.entered) return;
+    state.entered = true;
+
+    overlay.style.pointerEvents = "none";
+    overlay.style.opacity = "0";
+    setTimeout(() => { overlay.style.display = "none"; }, 200);
+
     canvas.style.opacity = "1";
     content.style.opacity = "1";
     links.style.opacity = "1";
     links.style.pointerEvents = "auto";
     lyricEl.style.opacity = "1";
-    // Safety fallback: if YouTube takes longer than 6s, start the video anyway
-    setTimeout(startVisualsSyncedToAudio, 6000);
+
+    startSynced();
   });
+
+  // ---------- matrix rain ----------
+  const SPEED = 2, DENSITY = 80, FONTSIZE = 10;
+  let drops = [];
 
   function rchar() { return CHARSET[Math.floor(Math.random() * CHARSET.length)]; }
 
-  function init() {
+  function initRain() {
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
     const cols = Math.floor(canvas.width / FONTSIZE);
     drops = [];
     for (let i = 0; i < cols; i++) {
       if (Math.random() * 100 < DENSITY) {
-        drops.push({ x: i, y: Math.random() * -(canvas.height / FONTSIZE), speed: 0.3 + Math.random() * 0.7, length: 3 + Math.floor(Math.random() * 5), chars: [] });
+        drops.push({
+          x: i,
+          y: Math.random() * -(canvas.height / FONTSIZE),
+          speed: 0.3 + Math.random() * 0.7,
+          length: 3 + Math.floor(Math.random() * 5),
+          chars: []
+        });
       }
     }
   }
 
-  function draw() {
+  function drawRain() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.font = FONTSIZE + "px monospace";
-    for (const drop of drops) {
-      drop.y += drop.speed * SPEED;
-      drop.chars.push(rchar());
-      if (drop.chars.length > drop.length) drop.chars.shift();
-      for (let j = 0; j < drop.chars.length; j++) {
-        const py = (drop.y - j) * FONTSIZE;
+    for (const d of drops) {
+      d.y += d.speed * SPEED;
+      d.chars.push(rchar());
+      if (d.chars.length > d.length) d.chars.shift();
+      for (let j = 0; j < d.chars.length; j++) {
+        const py = (d.y - j) * FONTSIZE;
         if (py < 0 || py > canvas.height) continue;
-        const b = Math.floor(255 * (1 - j / drop.length));
+        const b = Math.floor(255 * (1 - j / d.length));
         ctx.fillStyle = "rgb(" + b + "," + b + "," + b + ")";
-        ctx.fillText(drop.chars[drop.chars.length - 1 - j], drop.x * FONTSIZE, py);
+        ctx.fillText(d.chars[d.chars.length - 1 - j], d.x * FONTSIZE, py);
       }
-      if (drop.y * FONTSIZE > canvas.height + drop.length * FONTSIZE) { drop.y = Math.random() * -20; drop.chars = []; }
+      if (d.y * FONTSIZE > canvas.height + d.length * FONTSIZE) {
+        d.y = Math.random() * -20;
+        d.chars = [];
+      }
     }
   }
 
   let last = 0;
-  function loop(ts) { if (ts - last >= 33) { last = ts; draw(); } requestAnimationFrame(loop); }
+  function loop(ts) {
+    if (ts - last >= 33) { last = ts; drawRain(); }
+    requestAnimationFrame(loop);
+  }
 
-  window.addEventListener("resize", init);
-  init();
+  // ---------- boot ----------
+  window.addEventListener("resize", initRain);
+  initSong();
+  initRain();
   requestAnimationFrame(loop);
+})();
 </script>
 </body>
 </html>
